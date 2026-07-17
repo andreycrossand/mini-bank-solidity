@@ -11,27 +11,31 @@ contract MyMiniBank {
     error AmountTooSmall();
     error TransferFailed();
     error TimeLocked();
+    error BankInsufficientFunds();
 
     event Deposit(address user, uint256 amount);
     event Withdraw(address user, uint256 amount);
+    event RewardHasGotten(address user, uint256 amount);
 
     uint256 public constant VIP_THRESHOLD = 2 ether;
     uint256 public nextId = 1;
     uint256 public totalProfit = 0;
     address public owner;
 
-    ///@notice userId => userbalance
+    /// @notice userId => userbalance
     mapping (uint256 => uint256) public userBalance;
 
-    ///@notice address => address to ID
+    /// @notice address => address to ID
     mapping (address => uint256) public userAddressToID;
 
-    ///@notice address => ID to address
+    /// @notice address => ID to address
     mapping (uint256 => address) public idToUserAddress;
 
-    ///@notice ID to time last deposit
+    /// @notice ID to time last deposit
     mapping (uint256 => uint256) public depositTime;
     
+    /// @notice Initializes the contract and sets the deployer as the owner
+    /// @dev Sets the owner address to the caller
     constructor() {
         owner = msg.sender;
     }
@@ -78,18 +82,32 @@ contract MyMiniBank {
         }
     }
 
+
+    /// @notice Deposits ETH into the bank and triggers interest calculation
+    /// @dev Calculates rewards based on 10-minute intervals, checks contract liquidity, 
+    ///      and updates the user's balance and deposit timestamp.
+    /// @custom:throws TimeLocked if the deposit happens before the 10-minute cooldown
+    /// @custom:throws UserHasNotRegisteredYet if the caller is not registered
     function deposit() public payable {
         uint256 currentId = userAddressToID[msg.sender];
         require(currentId != 0, UserHasNotRegisteredYet());
         if (depositTime[currentId] != 0) {
-            require(block.timestamp >= 10 minutes + depositTime[currentId], TimeLocked());
+            require(block.timestamp >= depositTime[currentId] + 10 minutes, TimeLocked());
+            uint256 timeElapsed = block.timestamp - depositTime[currentId];
+            uint256 intervals = timeElapsed / 10 minutes;
+            if(intervals > 0) {
+                uint256 reward = ((userBalance[currentId] * 3) / 1000) * intervals;
+                require(address(this).balance >= totalProfit + reward, BankInsufficientFunds());
+                userBalance[currentId] += reward;
+                emit RewardHasGotten(msg.sender, reward);
+            }
         }
         userBalance[currentId] += msg.value;
         depositTime[currentId] = block.timestamp;
         emit Deposit(msg.sender, msg.value);
     }
 
-    ///@dev withdraw with bank fee (5 %)
+    /// @dev withdraw with bank fee (5 %)
     function withdraw(uint256 _amount) public {
         uint256 profit = 0;
         uint256 newCurrentId = userAddressToID[msg.sender]; 
