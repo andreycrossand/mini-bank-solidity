@@ -12,10 +12,12 @@ contract MyMiniBank {
     error TransferFailed();
     error TimeLocked();
     error BankInsufficientFunds();
+    error AddressIsBlackListed();
 
     event Deposit(address user, uint256 amount);
     event Withdraw(address user, uint256 amount);
     event RewardHasGotten(address user, uint256 amount);
+    event AddressBlacklisted(address indexed user, bool status);
 
     uint256 public constant VIP_THRESHOLD = 2 ether;
     uint256 public nextId = 1;
@@ -33,6 +35,9 @@ contract MyMiniBank {
 
     /// @notice ID to time last deposit
     mapping (uint256 => uint256) public depositTime;
+
+    /// @notice userAddress to blacklist status
+    mapping (address => bool) public isBlackListed;
     
     /// @notice Initializes the contract and sets the deployer as the owner
     /// @dev Sets the owner address to the caller
@@ -50,6 +55,11 @@ contract MyMiniBank {
         _;
     }
 
+    function blacklist(address _user, bool _isBlackListed) public onlyOwner{
+        isBlackListed[_user] = _isBlackListed;
+        emit AddressBlacklisted(_user, _isBlackListed);
+    }
+
     function registration() public onlyVisitor{
         require(userAddressToID[msg.sender] == 0, UserHasAlreadyRegistered());
         idToUserAddress[nextId] = msg.sender;
@@ -64,6 +74,8 @@ contract MyMiniBank {
         require(success, TransferFailed());
     }
 
+
+
     function getBalance(uint256 _id) public view returns(uint256) {
          return userBalance[_id];
     }
@@ -72,12 +84,14 @@ contract MyMiniBank {
         return address(this).balance;
     }
 
-    function getStatus() public view returns(string memory) {
-        if (userBalance[userAddressToID[msg.sender]] >= VIP_THRESHOLD){
+    function getStatus(address _user) public view returns(string memory) {
+        require(userAddressToID[_user] != 0, UserHasNotRegisteredYet());
+        require(!isBlackListed[_user], AddressIsBlackListed());
+        if (userBalance[userAddressToID[_user]] >= VIP_THRESHOLD){
             return "You are vip user";
         }
 
-        else {
+        else{
             return "You are poor user";
         }
     }
@@ -88,9 +102,11 @@ contract MyMiniBank {
     ///      and updates the user's balance and deposit timestamp.
     /// @custom:throws TimeLocked if the deposit happens before the 10-minute cooldown
     /// @custom:throws UserHasNotRegisteredYet if the caller is not registered
+    /// @custom:throws AddressIsBlackListed if the caller in the blacklist
     function deposit() public payable {
         uint256 currentId = userAddressToID[msg.sender];
         require(currentId != 0, UserHasNotRegisteredYet());
+        require(!isBlackListed[msg.sender], AddressIsBlackListed());
         if (depositTime[currentId] != 0) {
             require(block.timestamp >= depositTime[currentId] + 10 minutes, TimeLocked());
             uint256 timeElapsed = block.timestamp - depositTime[currentId];

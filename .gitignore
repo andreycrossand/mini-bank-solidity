@@ -3,3 +3,7 @@ node_modules/
 artifacts/
 cache/
 .env
+.workspaces/
+remix.config.json
+.deps/
+.deps/
