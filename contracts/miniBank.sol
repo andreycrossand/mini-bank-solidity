@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+/**
+ * @title MyMiniBank
+ * @dev Implements basic banking: deposits, 10-minute interval rewards, 
+ *      withdrawals with fees, and anti-spam protection.
+ */
 contract MyMiniBank {
 
     error NotOwner();
     error UserHasAlreadyRegistered();
-    error OnlyVisitor();
     error UserHasNotRegisteredYet();
     error NotEnoughMoney();
     error AmountTooSmall();
@@ -14,33 +18,25 @@ contract MyMiniBank {
     error BankInsufficientFunds();
     error AddressIsBlackListed();
 
-    event Deposit(address user, uint256 amount);
-    event Withdraw(address user, uint256 amount);
-    event RewardHasGotten(address user, uint256 amount);
+    struct UserInfo {
+        uint256 balance;
+        uint256 depositTime;
+        bool isRegistered;
+    }
+
+    // 'indexed' allows off-chain tools to filter events by these parameters efficiently.
+    event Deposit(address indexed user, uint256 amount);
+    event Withdraw(address indexed user, uint256 amount);
+    event RewardDistributed(address indexed user, uint256 amount);
     event AddressBlacklisted(address indexed user, bool status);
 
     uint256 public constant VIP_THRESHOLD = 2 ether;
-    uint256 public nextId = 1;
-    uint256 public totalProfit = 0;
+    uint256 public totalProfit;
     address public owner;
 
-    /// @notice userId => userbalance
-    mapping (uint256 => uint256) public userBalance;
-
-    /// @notice address => address to ID
-    mapping (address => uint256) public userAddressToID;
-
-    /// @notice address => ID to address
-    mapping (uint256 => address) public idToUserAddress;
-
-    /// @notice ID to time last deposit
-    mapping (uint256 => uint256) public depositTime;
-
-    /// @notice userAddress to blacklist status
+    mapping (address => UserInfo) public users;
     mapping (address => bool) public isBlackListed;
     
-    /// @notice Initializes the contract and sets the deployer as the owner
-    /// @dev Sets the owner address to the caller
     constructor() {
         owner = msg.sender;
     }
@@ -50,23 +46,38 @@ contract MyMiniBank {
         _;
     }
 
-    modifier onlyVisitor() {
-        require(owner != msg.sender, OnlyVisitor());
-        _;
-    }
-
-    function blacklist(address _user, bool _isBlackListed) public onlyOwner{
+    /// @notice Manages the blacklist status of users
+    function blacklist(address _user, bool _isBlackListed) public onlyOwner {
         isBlackListed[_user] = _isBlackListed;
         emit AddressBlacklisted(_user, _isBlackListed);
     }
 
-    function registration() public onlyVisitor{
-        require(userAddressToID[msg.sender] == 0, UserHasAlreadyRegistered());
-        idToUserAddress[nextId] = msg.sender;
-        userAddressToID[msg.sender] = nextId;
-        nextId++;
+    /// @notice Internal logic to calculate and distribute 3% rewards every 10 minutes
+    /// @dev Updates user balance and shifts depositTime based on completed intervals
+    function _processRewards(address _user) internal {
+        UserInfo storage user = users[_user];
+        if (user.depositTime == 0 || user.balance == 0) return;
+        
+        uint256 timeElapsed = block.timestamp - user.depositTime;
+        uint256 intervals = timeElapsed / 10 minutes;
+        
+        if (intervals > 0) {
+            uint256 reward = ((user.balance * 3) / 1000) * intervals;
+            require(address(this).balance >= (totalProfit + reward), BankInsufficientFunds());
+            
+            user.balance += reward;
+            user.depositTime += (intervals * 10 minutes);
+            emit RewardDistributed(_user, reward);
+        }
     }
 
+    /// @notice Registers a new user in the system
+    function registration() public {
+        require(!users[msg.sender].isRegistered, UserHasAlreadyRegistered());
+        users[msg.sender] = UserInfo(0, 0, true);
+    }
+
+    /// @notice Withdraws the bank's accumulated fees (owner only)
     function claimProfit() public onlyOwner {
         uint256 currentTotalProfit = totalProfit;
         totalProfit = 0;
@@ -74,77 +85,57 @@ contract MyMiniBank {
         require(success, TransferFailed());
     }
 
-
-
-    function getBalance(uint256 _id) public view returns(uint256) {
-         return userBalance[_id];
-    }
-
     function getBankBalance() public view onlyOwner returns(uint256) {
         return address(this).balance;
     }
 
-    function getStatus(address _user) public view returns(string memory) {
-        require(userAddressToID[_user] != 0, UserHasNotRegisteredYet());
-        require(!isBlackListed[_user], AddressIsBlackListed());
-        if (userBalance[userAddressToID[_user]] >= VIP_THRESHOLD){
-            return "You are vip user";
-        }
-
-        else{
-            return "You are poor user";
-        }
+    function getUserInfo(address _user) external view returns(uint256 balance, uint256 depositTime) {
+        return (users[_user].balance, users[_user].depositTime);
     }
 
-
-    /// @notice Deposits ETH into the bank and triggers interest calculation
-    /// @dev Calculates rewards based on 10-minute intervals, checks contract liquidity, 
-    ///      and updates the user's balance and deposit timestamp.
-    /// @custom:throws TimeLocked if the deposit happens before the 10-minute cooldown
-    /// @custom:throws UserHasNotRegisteredYet if the caller is not registered
-    /// @custom:throws AddressIsBlackListed if the caller in the blacklist
+    /// @notice Deposits ETH into the bank
+    /// @dev Requires a 10-minute cooldown between deposits if balance > 0
     function deposit() public payable {
-        uint256 currentId = userAddressToID[msg.sender];
-        require(currentId != 0, UserHasNotRegisteredYet());
+        require(users[msg.sender].isRegistered, UserHasNotRegisteredYet());
         require(!isBlackListed[msg.sender], AddressIsBlackListed());
-        if (depositTime[currentId] != 0) {
-            require(block.timestamp >= depositTime[currentId] + 10 minutes, TimeLocked());
-            uint256 timeElapsed = block.timestamp - depositTime[currentId];
-            uint256 intervals = timeElapsed / 10 minutes;
-            if(intervals > 0) {
-                uint256 reward = ((userBalance[currentId] * 3) / 1000) * intervals;
-                require(address(this).balance >= totalProfit + reward, BankInsufficientFunds());
-                userBalance[currentId] += reward;
-                emit RewardHasGotten(msg.sender, reward);
-            }
+        
+        UserInfo storage user = users[msg.sender];
+        if (user.balance > 0) {
+            require(block.timestamp >= user.depositTime + 10 minutes, TimeLocked());
         }
-        userBalance[currentId] += msg.value;
-        depositTime[currentId] = block.timestamp;
+        
+        _processRewards(msg.sender);
+        
+        if (user.depositTime == 0) {
+            user.depositTime = block.timestamp;
+        }
+        
+        user.balance += msg.value;
         emit Deposit(msg.sender, msg.value);
     }
 
-    /// @dev withdraw with bank fee (5 %)
+    /// @notice Withdraws funds from the bank
+    /// @dev Fees: 1% for VIP (>= 2 ETH), 5% for regular users. 10-minute cooldown applied.
     function withdraw(uint256 _amount) public {
-        uint256 profit = 0;
-        uint256 newCurrentId = userAddressToID[msg.sender]; 
-        require(newCurrentId != 0, UserHasNotRegisteredYet());
-        require(_amount <= userBalance[newCurrentId], NotEnoughMoney());
+        UserInfo storage user = users[msg.sender];
+        require(user.isRegistered, UserHasNotRegisteredYet());
+        require(!isBlackListed[msg.sender], AddressIsBlackListed());
+        require(_amount <= user.balance, NotEnoughMoney());
         require(_amount >= 20, AmountTooSmall());
-        if(depositTime[newCurrentId] != 0) {
-            require(block.timestamp >= 10 seconds + depositTime[newCurrentId], TimeLocked());
-        }
-        if (userBalance[newCurrentId] >= VIP_THRESHOLD) {
-            profit = _amount / 100;
-        }
-
-        else {
-            profit = _amount / 20;
-        }
-        userBalance[newCurrentId] -= _amount;
+        
+        require(block.timestamp >= user.depositTime + 10 minutes, TimeLocked());
+        
+        _processRewards(msg.sender);
+        
+        uint256 profit = (user.balance >= VIP_THRESHOLD) ? (_amount / 100) : (_amount / 20);
+        
+        user.balance -= _amount;
         totalProfit += profit;
+        user.depositTime = block.timestamp;
+        
         (bool success, ) = payable(msg.sender).call{value: _amount - profit}("");
         require(success, TransferFailed());
-        depositTime[newCurrentId] = block.timestamp;
+        
         emit Withdraw(msg.sender, _amount);
     }
 }
