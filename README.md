@@ -1,29 +1,34 @@
-# Mini Bank Smart Contract
+# MiniBank Smart Contract
 
-A secure and modular decentralized banking system built on Ethereum using Solidity. This project implements a user-based accounting system, allowing for registration, deposits, and secure withdrawals.
+A decentralized mini-bank smart contract built with Solidity. It features a time-based reward system, a referral program, dynamic withdrawal fees, and robust admin security controls.
 
-## Features
+## 🚀 Key Features
 
-- **User Registration**: Each user gets a unique, incremental ID mapped to their wallet address.
-- **Role-Based Access**: Distinguishes between the contract owner (admin) and regular visitors.
-- **Deposit System**: Users can deposit ETH, which is tracked internally in the contract.
-- **Secure Withdrawals**: Implements the Checks-Effects-Interactions pattern to prevent reentrancy attacks.
-- **Event Logging**: Emits events for major actions (Deposit/Withdraw) for easy tracking.
+### 1. User Registration & Referral System
+* **Paid Registration:** Users must pay a registration fee (`0.01 ETH`). Any excess ETH sent during registration is automatically refunded.
+* **Referral Discounts:** Users registering with a valid referrer's address get a 25% discount on the registration fee (`0.0075 ETH`).
+* **Referral Rewards:** Referrers automatically receive 20% of the bank's profit fee whenever their referrals withdraw funds.
 
-## Technical Details
+### 2. Deposits & Rewards
+* **Time-Locked Actions:** A mandatory 10-minute cooldown is applied between deposits and withdrawals to prevent spam.
+* **Interval Rewards:** Users earn a **3% reward** on their balance for every completed 10-minute interval.
+* **Deposit Limits:** Maximum deposit is capped at `5 ETH` per user to manage contract liquidity risks.
 
-- **Language**: Solidity ^0.8.28
-- **Security**: 
-    - Custom error handling for gas efficiency.
-    - Protected against reentrancy attacks.
-    - Access control via modifiers.
+### 3. Withdrawals
+* **Dynamic Fees:** 
+  * Standard fee: **5%**
+  * VIP fee (balances >= 2 ETH): **1%**
+* **Emergency Withdrawals:** Users can bypass standard checks in an emergency, subject to a strict **10% penalty fee**.
 
-## How to Deploy
+### 4. Admin & Security Controls
+* **Pausable Architecture:** The contract owner can halt all core functions (deposits, withdrawals, registrations) in case of an emergency.
+* **Blacklist:** The owner can block malicious addresses from interacting with the bank.
+* **Profit Claiming:** The owner can safely withdraw accumulated bank profits (registration fees + withdrawal fees) without touching user deposits.
 
-1. Open [Remix IDE](https://remix.ethereum.org/).
-2. Create a new file `MiniBank.sol` and paste the contract code.
-3. Compile using the **0.8.28** compiler version.
+## 🛠 Tech Stack
+* **Solidity:** `^0.8.28`
 
-## License
-
-This project is licensed under the MIT License.
+## 🔐 Security Considerations
+* Protection against self-referrals and non-existent referrers.
+* Proper state updates before external calls (Checks-Effects-Interactions pattern).
+* Graceful handling of excess `msg.value` to prevent stuck ETH.
